@@ -1,4 +1,4 @@
-import React, {useState, useRef, useEffect, useCallback} from 'react';
+import React, {useState, useRef, useEffect} from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, FlatList,
   StyleSheet, Animated, Easing, Vibration, Linking,
@@ -22,21 +22,18 @@ const QUICK_ACTIONS = [
   {icon: '🌙', cmd: 'night light on', label: 'Night'},
 ];
 
-// ─── Android Device Commands ───
-const ANDROID_COMMANDS = {
-  'turn on flashlight': 'flashlight_on',
-  'turn off flashlight': 'flashlight_off',
-  'flashlight on': 'flashlight_on',
-  'flashlight off': 'flashlight_off',
-  'torch on': 'flashlight_on',
-  'torch off': 'flashlight_off',
-  'vibrate': 'vibrate',
-  'open camera': 'open_camera',
-  'take a selfie': 'open_camera',
-  'open settings': 'open_settings',
-  'open wifi settings': 'open_wifi',
-  'open bluetooth settings': 'open_bluetooth',
-  'set alarm': 'set_alarm',
+const JARVIS_PHRASES = {
+  micRequired: 'Microphone permission is required for voice commands, sir.',
+  openingCamera: 'Opening camera, sir.',
+  openingSettings: 'Opening device settings, sir.',
+  openingSms: contact => `Opening messages for ${contact}, sir.`,
+  placingCall: contact => `Placing a call to ${contact}, sir.`,
+  openingNavigation: destination => `Starting navigation to ${destination}, sir.`,
+  vibrating: 'Vibrating now, sir.',
+  localUnavailable:
+    'That local action is unavailable on this device. Routing through backend, sir.',
+  backendUnavailable:
+    'Connection to your Jarvis backend failed. Please check network and server status, sir.',
 };
 
 export default function HomeScreen() {
@@ -154,16 +151,37 @@ export default function HomeScreen() {
   // ─── Request Mic Permission ───
   async function requestMicPermission() {
     if (Platform.OS === 'android') {
-      const granted = await PermissionsAndroid.request(
+      return requestPermission(
         PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
-        {
-          title: 'Jarvis Voice Permission',
-          message: 'Jarvis needs microphone access for voice commands.',
-          buttonPositive: 'Grant',
-        },
+        'Jarvis Voice Permission',
+        'Jarvis needs microphone access for voice commands.',
       );
-      return granted === PermissionsAndroid.RESULTS.GRANTED;
     }
+    return true;
+  }
+
+  async function requestPermission(permission, title, message) {
+    if (Platform.OS !== 'android') return true;
+
+    const hasPermission = await PermissionsAndroid.check(permission);
+    if (hasPermission) return true;
+
+    const granted = await PermissionsAndroid.request(permission, {
+      title,
+      message,
+      buttonPositive: 'Grant',
+    });
+    return granted === PermissionsAndroid.RESULTS.GRANTED;
+  }
+
+  function normalizeCommand(text) {
+    return text.toLowerCase().replace(/hello jarvis/gi, '').replace(/jarvis/gi, '').trim();
+  }
+
+  async function openUrlSafely(url) {
+    const canOpen = await Linking.canOpenURL(url);
+    if (!canOpen) return false;
+    await Linking.openURL(url);
     return true;
   }
 
@@ -176,7 +194,7 @@ export default function HomeScreen() {
     } else {
       const hasPermission = await requestMicPermission();
       if (!hasPermission) {
-        addMessage('ai', 'Microphone permission required for voice commands, sir.');
+        addMessage('ai', JARVIS_PHRASES.micRequired);
         return;
       }
       try {
@@ -192,54 +210,119 @@ export default function HomeScreen() {
 
   function handleVoiceResult(text) {
     setIsListening(false);
-    let command = text.toLowerCase().replace(/hello jarvis/gi, '').replace(/jarvis/gi, '').trim();
+    let command = normalizeCommand(text);
     if (!command) command = 'Hello';
     addMessage('user', command);
     submitCommand(command);
   }
 
   // ─── Android Device Commands ───
-  function handleAndroidCommand(lower) {
+  async function handleAndroidCommand(lower) {
     if (lower.includes('vibrate')) {
       Vibration.vibrate(500);
-      addMessage('ai', 'Vibrating, sir.', 'Device');
-      speak('Vibrating, sir.');
-      return true;
+      addMessage('ai', JARVIS_PHRASES.vibrating, 'Device');
+      speak(JARVIS_PHRASES.vibrating);
+      return {handled: true};
     }
     if (lower.includes('open camera') || lower.includes('selfie')) {
-      Linking.openURL('content://media/internal/images/media');
-      addMessage('ai', 'Opening camera, sir.', 'Device');
-      speak('Opening camera, sir.');
-      return true;
+      const cameraPermission = await requestPermission(
+        PermissionsAndroid.PERMISSIONS.CAMERA,
+        'Jarvis Camera Permission',
+        'Jarvis needs camera permission for camera shortcuts.',
+      );
+      if (!cameraPermission) {
+        addMessage('ai', JARVIS_PHRASES.localUnavailable, 'Device');
+        return {handled: false};
+      }
+
+      try {
+        const opened = await openUrlSafely('content://media/internal/images/media');
+        if (opened) {
+          addMessage('ai', JARVIS_PHRASES.openingCamera, 'Device');
+          speak(JARVIS_PHRASES.openingCamera);
+          return {handled: true};
+        }
+      } catch (_) {
+        // Fall through to backend routing.
+      }
+
+      addMessage('ai', JARVIS_PHRASES.localUnavailable, 'Device');
+      return {handled: false};
     }
     if (lower.includes('open settings')) {
-      Linking.openSettings();
-      addMessage('ai', 'Opening device settings, sir.', 'Device');
-      speak('Opening device settings, sir.');
-      return true;
+      await Linking.openSettings();
+      addMessage('ai', JARVIS_PHRASES.openingSettings, 'Device');
+      speak(JARVIS_PHRASES.openingSettings);
+      return {handled: true};
     }
     if (lower.includes('call ')) {
       const contact = lower.replace('call ', '').trim();
-      Linking.openURL(`tel:${contact}`);
-      addMessage('ai', `Calling ${contact}, sir.`, 'Device');
-      speak(`Calling ${contact}, sir.`);
-      return true;
+      const callPermission = await requestPermission(
+        PermissionsAndroid.PERMISSIONS.CALL_PHONE,
+        'Jarvis Calling Permission',
+        'Jarvis needs call permission to place phone calls.',
+      );
+      if (!callPermission) {
+        addMessage('ai', JARVIS_PHRASES.localUnavailable, 'Device');
+        return {handled: false};
+      }
+
+      const opened = await openUrlSafely(`tel:${contact}`);
+      if (!opened) {
+        addMessage('ai', JARVIS_PHRASES.localUnavailable, 'Device');
+        return {handled: false};
+      }
+
+      addMessage('ai', JARVIS_PHRASES.placingCall(contact), 'Device');
+      speak(JARVIS_PHRASES.placingCall(contact));
+      return {handled: true};
     }
     if (lower.includes('send message to') || lower.includes('text ')) {
       const contact = lower.replace(/send message to|text /gi, '').trim();
-      Linking.openURL(`sms:${contact}`);
-      addMessage('ai', `Opening messages for ${contact}, sir.`, 'Device');
-      speak(`Opening messages for ${contact}, sir.`);
-      return true;
+      const smsPermission = await requestPermission(
+        PermissionsAndroid.PERMISSIONS.SEND_SMS,
+        'Jarvis Messaging Permission',
+        'Jarvis needs SMS permission to start messaging actions.',
+      );
+      if (!smsPermission) {
+        addMessage('ai', JARVIS_PHRASES.localUnavailable, 'Device');
+        return {handled: false};
+      }
+
+      const opened = await openUrlSafely(`sms:${contact}`);
+      if (!opened) {
+        addMessage('ai', JARVIS_PHRASES.localUnavailable, 'Device');
+        return {handled: false};
+      }
+
+      addMessage('ai', JARVIS_PHRASES.openingSms(contact), 'Device');
+      speak(JARVIS_PHRASES.openingSms(contact));
+      return {handled: true};
     }
     if (lower.includes('open map') || lower.includes('navigate to')) {
       const dest = lower.replace(/open map|navigate to /gi, '').trim();
-      Linking.openURL(`google.navigation:q=${encodeURIComponent(dest)}`);
-      addMessage('ai', `Opening navigation to ${dest}, sir.`, 'Device');
-      speak(`Opening navigation to ${dest}, sir.`);
-      return true;
+      const opened = await openUrlSafely(`google.navigation:q=${encodeURIComponent(dest)}`);
+      if (!opened) {
+        addMessage('ai', JARVIS_PHRASES.localUnavailable, 'Device');
+        return {handled: false};
+      }
+
+      addMessage('ai', JARVIS_PHRASES.openingNavigation(dest), 'Device');
+      speak(JARVIS_PHRASES.openingNavigation(dest));
+      return {handled: true};
     }
-    return false;
+    if (
+      lower.includes('flashlight') ||
+      lower.includes('torch') ||
+      lower.includes('wifi') ||
+      lower.includes('bluetooth') ||
+      lower.includes('set alarm')
+    ) {
+      addMessage('ai', JARVIS_PHRASES.localUnavailable, 'Device');
+      return {handled: false};
+    }
+
+    return {handled: false};
   }
 
   // ─── Submit to Server ───
@@ -247,8 +330,9 @@ export default function HomeScreen() {
     setIsThinking(true);
 
     // Check Android-specific commands first
-    const lower = text.toLowerCase();
-    if (handleAndroidCommand(lower)) {
+    const lower = normalizeCommand(text);
+    const localResult = await handleAndroidCommand(lower);
+    if (localResult.handled) {
       setIsThinking(false);
       return;
     }
@@ -284,12 +368,15 @@ export default function HomeScreen() {
       addMessage('ai', data.response, data.provider);
       
       if (data.action === 'open_url' && data.url) {
-        Linking.openURL(data.url);
+        const opened = await openUrlSafely(data.url);
+        if (!opened) {
+          addMessage('ai', JARVIS_PHRASES.localUnavailable, 'System');
+        }
       }
       
       speak(data.response);
     } catch (e) {
-      addMessage('ai', 'Connection to server failed. Check your internet, sir.', 'Error');
+      addMessage('ai', JARVIS_PHRASES.backendUnavailable, 'Error');
     }
     
     setIsThinking(false);
