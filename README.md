@@ -1,5 +1,60 @@
 This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
 
+# Deployment Quick Links
+
+Use these docs for production deployment and release publishing:
+
+- Render deployment guide: [`docs/render-deploy-guide.md`](docs/render-deploy-guide.md)
+- Privacy policy template: [`docs/privacy-policy.md`](docs/privacy-policy.md)
+- Play Store listing content pack: [`docs/play-store-listing-pack.md`](docs/play-store-listing-pack.md)
+
+## Release Commands
+
+Run these from project root unless noted otherwise.
+
+### Build Release APK (unsigned)
+
+```sh
+cd android
+./gradlew assembleRelease
+```
+
+Output:
+- `android/app/build/outputs/apk/release/app-release-unsigned.apk`
+
+### Sign Release APK
+
+```sh
+# Example with apksigner (update paths/passwords for your environment)
+<ANDROID_SDK>/build-tools/<version>/apksigner sign \
+  --ks android/app/jarvis-release.keystore \
+  --ks-key-alias jarviskey \
+  --ks-pass pass:<STORE_PASSWORD> \
+  --key-pass pass:<KEY_PASSWORD> \
+  --out android/app/build/outputs/apk/release/app-release-signed.apk \
+  android/app/build/outputs/apk/release/app-release-unsigned.apk
+```
+
+Output:
+- `android/app/build/outputs/apk/release/app-release-signed.apk`
+
+### Verify Signed APK
+
+```sh
+<ANDROID_SDK>/build-tools/<version>/apksigner verify --verbose --print-certs \
+  android/app/build/outputs/apk/release/app-release-signed.apk
+```
+
+### Build Play Store AAB
+
+```sh
+cd android
+./gradlew bundleRelease
+```
+
+Output:
+- `android/app/build/outputs/bundle/release/app-release.aab`
+
 # Getting Started
 
 > **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
