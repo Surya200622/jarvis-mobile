@@ -11,11 +11,12 @@ import {
 } from 'react-native';
 import {useAuth} from '../context/AuthContext';
 import {COLORS} from '../styles/theme';
+import {JARVIS_CLOUD_URL, JARVIS_AUTH_TOKEN} from '@env';
 
 export default function LoginScreen() {
   const {login} = useAuth();
-  const [serverUrl, setServerUrl] = useState('');
-  const [token, setToken] = useState('');
+  const [serverUrl, setServerUrl] = useState(JARVIS_CLOUD_URL || '');
+  const [token, setToken] = useState(JARVIS_AUTH_TOKEN || '');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const pulseAnim = React.useRef(new Animated.Value(1)).current;
